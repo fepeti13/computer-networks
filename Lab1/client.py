@@ -1,3 +1,5 @@
+#Ferencz Peter, 522/1
+
 from socket import *
 serverName = 'localhost'
 serverPort = 12000
