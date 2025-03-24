@@ -1,21 +1,44 @@
+#Ferencz Peter, fpim2346, lab2 halozatok
 import socket
 import threading
-import os
-import mimetypes
 import time
 
 HOST = 'localhost'
 PORT = 12000
-WEB_ROOT = "webroot"
 TIMEOUT = 5
-SUPPORTED_MIME_TYPES = {
-    "text/plain",
-    "text/html",
-    "text/css",
-    "image/jpeg",
-    "image/png",
-    "video/mp4",
+
+MIME_TYPES = {
+    "html": "text/html",
+    "txt": "text/plain",
+    "css": "text/css",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "mp4": "video/mp4"
 }
+
+def get_mime_type(filename):
+    parts = filename.split(".")
+    ext = parts[-1].lower() if len(parts) > 1 else ""
+    return MIME_TYPES.get(ext, "application/octet-stream")
+
+def read_file(filename):
+    try:
+        with open(filename, "rb") as f:
+            return f.read()
+    except:
+        return None
+
+def parse_request(request):
+    lines = request.split("\r\n")
+    if len(lines) < 1:
+        return None, None
+    
+    parts = lines[0].split()
+    if len(parts) < 2:
+        return None, None
+
+    return parts[0], parts[1]
 
 def handle_client(client_socket, addr):
     thread_id = threading.get_ident()
@@ -29,32 +52,44 @@ def handle_client(client_socket, addr):
             request = client_socket.recv(1024).decode()
             if not request:
                 break
+            
+            print(f"[Thread {thread_id}] Received request:\n{request}")
 
-            request_line = request.split("\n")[0]
-            print(f"[Thread {thread_id}] Received request: {request_line}")
-
-            parts = request_line.split()
-            if len(parts) < 2:
-                break  
-
-            method, path = parts[0], parts[1]
-
+            method, path = parse_request(request)
             if method != "GET":
-                send_response(client_socket, "405 Method Not Allowed", "text/plain", "Only GET supported", keep_alive)
+                response = "HTTP/1.1 405 Method Not Allowed\r\n\r\nOnly GET supported"
+                client_socket.send(response.encode())
                 break
 
             if path == "/":
                 path = "/index.html"
 
-            file_path = os.path.join(WEB_ROOT, path.lstrip("/"))
-            connection_header = get_header_value(request, "Connection")
+            path = path.lstrip("/")
+            connection_header = "keep-alive" in request.lower()
+            keep_alive = connection_header
 
-            keep_alive = connection_header.lower() == "keep-alive" if connection_header else False
-
-            if os.path.isfile(file_path):
-                send_file(client_socket, file_path, keep_alive)
+            content = read_file(path)
+            if content:
+                mime_type = get_mime_type(path)
+                response_headers = (
+                    "HTTP/1.1 200 OK\r\n"
+                    f"Content-Type: {mime_type}\r\n"
+                    f"Content-Length: {len(content)}\r\n"
+                    f"Connection: {'keep-alive' if keep_alive else 'close'}\r\n"
+                    "\r\n"
+                )
+                client_socket.send(response_headers.encode() + content)
             else:
-                send_response(client_socket, "404 Not Found", "text/html", "<h1>404 File Not Found</h1>", keep_alive)
+                response_body = "<h1>404 File Not Found</h1>"
+                response_headers = (
+                    "HTTP/1.1 404 Not Found\r\n"
+                    "Content-Type: text/html\r\n"
+                    f"Content-Length: {len(response_body)}\r\n"
+                    f"Connection: {'keep-alive' if keep_alive else 'close'}\r\n"
+                    "\r\n"
+                    f"{response_body}"
+                )
+                client_socket.send(response_headers.encode())
 
         except socket.timeout:
             print(f"[Thread {thread_id}] Connection timed out")
@@ -63,54 +98,15 @@ def handle_client(client_socket, addr):
     print(f"[Thread {thread_id}] Closing connection")
     client_socket.close()
 
-def send_file(client_socket, file_path, keep_alive):
-    mime_type, _ = mimetypes.guess_type(file_path)
-    if mime_type not in SUPPORTED_MIME_TYPES:
-        send_response(client_socket, "415 Unsupported Media Type", "text/plain", "Unsupported file type", keep_alive)
-        return
-
-    with open(file_path, "rb") as f:
-        content = f.read()
-
-    headers = (
-        "HTTP/1.1 200 OK\r\n"
-        f"Content-Type: {mime_type}\r\n"
-        f"Content-Length: {len(content)}\r\n"
-        f"Connection: {'keep-alive' if keep_alive else 'close'}\r\n"
-        "\r\n"
-    )
-
-    client_socket.send(headers.encode() + content)
-
-def send_response(client_socket, status, content_type, body, keep_alive):
-    response = (
-        f"HTTP/1.1 {status}\r\n"
-        f"Content-Type: {content_type}\r\n"
-        f"Content-Length: {len(body)}\r\n"
-        f"Connection: {'keep-alive' if keep_alive else 'close'}\r\n"
-        "\r\n"
-        f"{body}"
-    )
-    client_socket.send(response.encode())
-
-def get_header_value(request, header_name):
-    for line in request.split("\n"):
-        if line.lower().startswith(header_name.lower() + ":"):
-            return line.split(":", 1)[1].strip()
-    return None
-
 def start_server():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind((HOST, PORT))
     server_socket.listen(5)
-
-    print(f"Server running on http://{HOST}:{PORT}")
+    print("Server is running...")
 
     while True:
         client_socket, addr = server_socket.accept()
         threading.Thread(target=handle_client, args=(client_socket, addr)).start()
 
-if __name__ == "__main__":
-    os.makedirs(WEB_ROOT, exist_ok=True)
-    start_server()
+start_server()
