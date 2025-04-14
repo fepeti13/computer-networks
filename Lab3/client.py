@@ -1,3 +1,5 @@
+#fpim2346, Ferencz Peter, 522
+
 from socket import *
 
 def send_command(sock, message):
